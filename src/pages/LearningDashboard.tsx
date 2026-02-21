@@ -57,28 +57,25 @@ export const LearningDashboard: React.FC = () => {
     }
     
     if (video.video_id) {
-      // If video_id itself looks like a direct video URL, use it as fallback
-      const isDirectUrl = video.video_id.startsWith('http') && 
-                         (video.video_id.includes('.mp4') || video.video_id.includes('.m3u8'));
+      const isFullUrl = video.video_id.startsWith('http');
       
+      if (isFullUrl) {
+        console.log("Using video_id as direct URL");
+        setStreamUrl(video.video_id);
+        return;
+      }
+
       try {
         const url = await apiService.getVideoStream(video.video_id);
         if (url) {
           setStreamUrl(url);
-        } else if (isDirectUrl) {
-          console.log("Using video_id as direct URL fallback");
-          setStreamUrl(video.video_id);
         } else {
           console.error("No stream URL found for video_id:", video.video_id);
           setError("Video stream could not be resolved.");
         }
       } catch (error) {
         console.error("Failed to fetch stream url:", error);
-        if (isDirectUrl) {
-          setStreamUrl(video.video_id);
-        } else {
-          setError("Failed to load video stream details.");
-        }
+        setError("Failed to load video stream details.");
       }
     }
   };

@@ -53,14 +53,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, title }) => {
       hlsRef.current = null;
     }
 
-    const useHls = src.toLowerCase().includes('.m3u8') || src.includes('m3u8');
+    const isHls = src.toLowerCase().includes('.m3u8') || src.includes('m3u8') || !src.split('?')[0].includes('.');
+    const isDirectVideo = src.toLowerCase().match(/\.(mp4|webm|ogg|mov)$/) || src.includes('.mp4');
 
-    if (useHls) {
+    const loadHls = () => {
       if (Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
-          backBufferLength: 90
+          backBufferLength: 90,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
         });
         hlsRef.current = hls;
         hls.loadSource(src);
@@ -72,15 +75,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, title }) => {
           if (data.fatal) {
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
-                setError("Network error. Please check your connection.");
-                hls.startLoad();
+                console.error("HLS Network Error:", data);
+                if (data.response?.code === 403) {
+                  setError("Access Denied (403). The video link might be expired or restricted.");
+                } else {
+                  setError("Network error. Retrying...");
+                  hls.startLoad();
+                }
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
-                setError("Media error. Trying to recover...");
+                console.error("HLS Media Error:", data);
                 hls.recoverMediaError();
                 break;
               default:
-                setError("An unrecoverable error occurred.");
+                console.error("HLS Fatal Error:", data);
+                setError("This video format is not supported or the link is broken.");
                 hls.destroy();
                 break;
             }
@@ -92,10 +101,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, title }) => {
       } else {
         setError("Your browser does not support HLS video playback.");
       }
+    };
+
+    if (isHls && !isDirectVideo) {
+      loadHls();
     } else {
-      // Regular video file
+      // Regular video file or fallback
       video.src = src;
       video.load();
+      
+      // If it's a direct video but fails, we might still want to try HLS as a last resort
+      // because some HLS streams don't have extensions
     }
 
     const handleTimeUpdate = () => setCurrentTime(video.currentTime);
@@ -107,10 +123,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, title }) => {
     };
     const handlePause = () => setIsPlaying(false);
     const handleError = (e: any) => {
-      console.error("Video element error:", e);
-      // Only set error if it's not already set by HLS
-      if (!hlsRef.current) {
-        setError("Failed to load video source. The format might be unsupported.");
+      const videoError = video.error;
+      console.error("Video element error:", videoError, e);
+      
+      // If native playback fails and we haven't tried HLS yet, try HLS
+      if (!hlsRef.current && !isYoutube) {
+        console.log("Native playback failed, attempting HLS fallback...");
+        loadHls();
+      } else if (!hlsRef.current) {
+        let msg = "Failed to load video source.";
+        if (videoError?.code === 4) msg = "The video format is not supported by your browser.";
+        if (videoError?.code === 3) msg = "Video playback was aborted.";
+        if (videoError?.code === 2) msg = "Network error while loading video.";
+        if (videoError?.code === 1) msg = "Video loading was interrupted.";
+        setError(msg);
       }
     };
 
