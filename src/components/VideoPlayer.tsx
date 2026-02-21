@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Play, Pause, Volume2, VolumeX, Maximize, RotateCcw, SkipForward, Settings } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, Maximize, RotateCcw, SkipForward, Settings, AlertCircle, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import Hls from 'hls.js';
 
 interface VideoPlayerProps {
   src: string;
@@ -10,6 +11,7 @@ interface VideoPlayerProps {
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, title }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -17,36 +19,142 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, title }) => {
   const [isMuted, setIsMuted] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const isYoutube = src.includes('youtube.com') || src.includes('youtu.be');
+  
+  const getYoutubeEmbedUrl = (url: string) => {
+    let videoId = '';
+    if (url.includes('v=')) {
+      videoId = url.split('v=')[1].split('&')[0];
+    } else if (url.includes('youtu.be/')) {
+      videoId = url.split('youtu.be/')[1].split('?')[0];
+    } else if (url.includes('embed/')) {
+      videoId = url.split('embed/')[1].split('?')[0];
+    }
+    return `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
+  };
 
   useEffect(() => {
+    if (isYoutube) {
+      setIsLoading(false);
+      return;
+    }
+
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !src) return;
+
+    setError(null);
+    setIsLoading(true);
+
+    // Clean up previous HLS instance
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    const useHls = src.toLowerCase().includes('.m3u8') || src.includes('m3u8');
+
+    if (useHls) {
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 90
+        });
+        hlsRef.current = hls;
+        hls.loadSource(src);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          video.play().catch(() => setIsPlaying(false));
+        });
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                setError("Network error. Please check your connection.");
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                setError("Media error. Trying to recover...");
+                hls.recoverMediaError();
+                break;
+              default:
+                setError("An unrecoverable error occurred.");
+                hls.destroy();
+                break;
+            }
+          }
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = src;
+        video.load();
+      } else {
+        setError("Your browser does not support HLS video playback.");
+      }
+    } else {
+      // Regular video file
+      video.src = src;
+      video.load();
+    }
 
     const handleTimeUpdate = () => setCurrentTime(video.currentTime);
     const handleLoadedMetadata = () => setDuration(video.duration);
     const handleWaiting = () => setIsLoading(true);
-    const handlePlaying = () => setIsLoading(false);
+    const handlePlaying = () => {
+      setIsLoading(false);
+      setIsPlaying(true);
+    };
+    const handlePause = () => setIsPlaying(false);
+    const handleError = (e: any) => {
+      console.error("Video element error:", e);
+      // Only set error if it's not already set by HLS
+      if (!hlsRef.current) {
+        setError("Failed to load video source. The format might be unsupported.");
+      }
+    };
 
     video.addEventListener('timeupdate', handleTimeUpdate);
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
     video.addEventListener('waiting', handleWaiting);
     video.addEventListener('playing', handlePlaying);
+    video.addEventListener('pause', handlePause);
+    video.addEventListener('error', handleError);
 
     return () => {
       video.removeEventListener('timeupdate', handleTimeUpdate);
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
       video.removeEventListener('waiting', handleWaiting);
       video.removeEventListener('playing', handlePlaying);
+      video.removeEventListener('pause', handlePause);
+      video.removeEventListener('error', handleError);
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
     };
-  }, [src]);
+  }, [src, isYoutube]);
 
-  const togglePlay = () => {
-    if (videoRef.current?.paused) {
-      videoRef.current.play();
-      setIsPlaying(true);
-    } else {
-      videoRef.current?.pause();
-      setIsPlaying(false);
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.volume = volume;
+      videoRef.current.muted = isMuted;
+    }
+  }, [volume, isMuted]);
+
+  const togglePlay = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (isYoutube) return;
+    
+    if (videoRef.current) {
+      if (videoRef.current.paused) {
+        videoRef.current.play().catch(err => {
+          console.error("Playback failed:", err);
+          setError("Click to play (Autoplay blocked)");
+        });
+      } else {
+        videoRef.current.pause();
+      }
     }
   };
 
@@ -59,12 +167,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, title }) => {
   };
 
   const formatTime = (time: number) => {
+    if (isNaN(time)) return "0:00";
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  const toggleFullscreen = () => {
+  const toggleFullscreen = (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (!containerRef.current) return;
     if (document.fullscreenElement) {
       document.exitFullscreen();
@@ -73,41 +183,111 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, title }) => {
     }
   };
 
+  if (isYoutube) {
+    return (
+      <div className="relative aspect-video bg-black rounded-xl overflow-hidden">
+        <iframe
+          src={getYoutubeEmbedUrl(src)}
+          className="w-full h-full"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+          title={title}
+        />
+      </div>
+    );
+  }
+
   return (
     <div 
       ref={containerRef}
-      className="relative aspect-video bg-black rounded-xl overflow-hidden group cursor-pointer"
-      onMouseMove={() => {
-        setShowControls(true);
-        const timer = setTimeout(() => setShowControls(false), 3000);
-        return () => clearTimeout(timer);
+      className="relative aspect-video bg-black rounded-xl overflow-hidden group cursor-default"
+      onMouseMove={() => setShowControls(true)}
+      onMouseLeave={() => {
+        if (isPlaying) setShowControls(false);
       }}
     >
       <video
         ref={videoRef}
-        src={src}
         className="w-full h-full"
         onClick={togglePlay}
-        autoPlay
+        playsInline
+        crossOrigin="anonymous"
       />
 
+      {/* Error Overlay */}
       <AnimatePresence>
-        {isLoading && (
+        {error && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-sm"
+            className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/95 z-50 p-6 text-center"
+          >
+            <AlertCircle className="w-12 h-12 text-red-500 mb-4" />
+            <h3 className="text-white font-bold text-lg mb-2">Playback Error</h3>
+            <p className="text-zinc-400 text-sm max-w-xs mb-6">{error}</p>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => {
+                  setError(null);
+                  if (videoRef.current) {
+                    videoRef.current.load();
+                    videoRef.current.play();
+                  }
+                }}
+                className="px-6 py-2 bg-emerald-500 text-white rounded-full font-medium hover:bg-emerald-600 transition-colors"
+              >
+                Try Again
+              </button>
+              <a 
+                href={src} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="px-6 py-2 bg-zinc-800 text-white rounded-full font-medium hover:bg-zinc-700 transition-colors flex items-center gap-2"
+              >
+                <ExternalLink className="w-4 h-4" />
+                Open Direct
+              </a>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Loading Overlay */}
+      <AnimatePresence>
+        {isLoading && !error && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px] z-40"
           >
             <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
           </motion.div>
         )}
       </AnimatePresence>
 
-      <div className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>
+      {/* Big Play Button (when paused) */}
+      <AnimatePresence>
+        {!isPlaying && !isLoading && !error && (
+          <motion.div 
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 1.2, opacity: 0 }}
+            className="absolute inset-0 flex items-center justify-center z-30"
+            onClick={togglePlay}
+          >
+            <div className="w-20 h-20 bg-emerald-500 rounded-full flex items-center justify-center shadow-2xl shadow-emerald-500/20 hover:scale-110 transition-transform cursor-pointer">
+              <Play className="w-10 h-10 text-white fill-current ml-1" />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className={`absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-black/60 transition-opacity duration-300 z-20 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0'}`}>
         <div className="absolute top-4 left-4 right-4 flex justify-between items-start">
-          <h3 className="text-white font-medium text-lg drop-shadow-md">{title}</h3>
-          <button className="p-2 text-white/80 hover:text-white transition-colors">
+          <h3 className="text-white font-medium text-lg drop-shadow-lg truncate max-w-[80%]">{title}</h3>
+          <button className="p-2 text-white/80 hover:text-white transition-colors bg-black/20 rounded-full backdrop-blur-md">
             <Settings className="w-5 h-5" />
           </button>
         </div>

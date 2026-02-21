@@ -78,7 +78,9 @@ export const apiService = {
         result.classes.forEach((item: any) => {
           if (item.video_url) {
             // It's a video
-            const isYoutube = item.video_url.includes('youtube.com') || item.video_url.includes('youtu.be');
+            const isYoutube = item.video_url.includes('youtube.com') || 
+                             item.video_url.includes('youtu.be') ||
+                             item.video_url.includes('youtube-nocookie.com');
             videos.push({
               title: item.title,
               video_id: isYoutube ? null : item.video_url,
@@ -108,7 +110,7 @@ export const apiService = {
 
   async getVideoStream(videoId: string): Promise<string | null> {
     try {
-      const response = await fetch(`${VIDEO_DETAILS_API}?name=${videoId}`);
+      const response = await fetch(`${VIDEO_DETAILS_API}?name=${encodeURIComponent(videoId)}`);
       const result = await response.json();
       return result.status === "success" ? result.stream_url : null;
     } catch (error) {

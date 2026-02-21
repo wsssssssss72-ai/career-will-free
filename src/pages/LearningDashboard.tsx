@@ -47,21 +47,38 @@ export const LearningDashboard: React.FC = () => {
   }, [batchId, topicId]);
 
   const handleVideoSelect = async (video: VideoContent) => {
-    if (video.url) {
-      window.open(video.url, '_blank');
-      return;
-    }
-    
     setActiveVideo(video);
     setActiveNote(null);
     setStreamUrl(null);
+
+    if (video.url) {
+      setStreamUrl(video.url);
+      return;
+    }
     
     if (video.video_id) {
+      // If video_id itself looks like a direct video URL, use it as fallback
+      const isDirectUrl = video.video_id.startsWith('http') && 
+                         (video.video_id.includes('.mp4') || video.video_id.includes('.m3u8'));
+      
       try {
         const url = await apiService.getVideoStream(video.video_id);
-        setStreamUrl(url);
+        if (url) {
+          setStreamUrl(url);
+        } else if (isDirectUrl) {
+          console.log("Using video_id as direct URL fallback");
+          setStreamUrl(video.video_id);
+        } else {
+          console.error("No stream URL found for video_id:", video.video_id);
+          setError("Video stream could not be resolved.");
+        }
       } catch (error) {
         console.error("Failed to fetch stream url:", error);
+        if (isDirectUrl) {
+          setStreamUrl(video.video_id);
+        } else {
+          setError("Failed to load video stream details.");
+        }
       }
     }
   };

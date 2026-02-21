@@ -67,7 +67,7 @@ async function startServer() {
   app.get("/api/proxy/video_details", async (req, res) => {
     const { name } = req.query;
     try {
-      const response = await fetch(`https://cw-vid-virid.vercel.app/get_video_details?name=${name}`);
+      const response = await fetch(`https://cw-vid-virid.vercel.app/get_video_details?name=${encodeURIComponent(name as string)}`);
       const result = await response.json();
       
       // Extract nested file_url from the new example structure
