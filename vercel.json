@@ -1,0 +1,24 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/proxy/batches",
+      "destination": "https://cw-ut-scammer-52a64964eb2b.herokuapp.com/api/batches"
+    },
+    {
+      "source": "/api/proxy/batch/:id",
+      "destination": "https://cw-api-website.vercel.app/batch/:id"
+    },
+    {
+      "source": "/api/proxy/content",
+      "destination": "https://cw-api-website.vercel.app/batch"
+    },
+    {
+      "source": "/api/proxy/video_details",
+      "destination": "https://cw-vid-virid.vercel.app/get_video_details"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
